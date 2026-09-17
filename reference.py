@@ -48,8 +48,8 @@ ROUTES = pd.DataFrame([
 # 3. Vehicle types and in-house fleet
 # ---------------------------------------------------------------
 VEHICLE_TYPES = pd.DataFrame([
-    {"vehicle_type": "CONTAINER", "payload_kg": 25000, "fuel_l_per_100km": 35},  # CALIBRATE (20-28t range)
-    {"vehicle_type": "REEFER",    "payload_kg": 12000, "fuel_l_per_100km": 33},  # CALIBRATE (10-15t, +10% for fridge unit)
+    {"vehicle_type": "CONTAINER", "capacity_cbm": 28, "fuel_l_per_100km": 35},  # CALIBRATE: 20ft ~33 m3 internal, ~28 usable
+    {"vehicle_type": "REEFER",    "capacity_cbm": 24, "fuel_l_per_100km": 33},  # CALIBRATE: 20ft reefer, ~24 m3 usable
 ])
 
 N_CONTAINER_TRUCKS = 10   # CALIBRATE
@@ -97,9 +97,11 @@ SUBCONTRACTORS = pd.DataFrame([
 # ---------------------------------------------------------------
 # 6. Demand and planner behaviour
 # ---------------------------------------------------------------
-AVG_TRUCKLOADS_PER_DAY = {"CONTAINER": 1.1, "REEFER": 0.5}  # CALIBRATE: tuned so planner rules give ~5-6 sub trips/week (see generate_data.py)
+AVG_TRUCKLOADS_PER_DAY = {"CONTAINER": 1.0, "REEFER": 0.45}  # CALIBRATE: tuned to ~5.5 sub trips/week (avg of 8 samples)
 BULK_SHARE = 0.5                  # CALIBRATE: share of truckloads that are bulk bookings
-RETAIL_ORDER_KG = (500, 4000)     # CALIBRATE: min/max weight of one retail customer's order
+CARTON_CBM = {"small": 0.06, "large": 0.12}  # CALIBRATE: 50x40x30 cm and 60x50x40 cm cartons
+LARGE_CARTON_SHARE = 0.4                     # CALIBRATE: share of cartons that are the large size
+RETAIL_CARTONS = (10, 60)                    # CALIBRATE: cartons per retail booking
 BULK_FILL = (0.6, 1.0)            # CALIBRATE: bulk order weight as a share of payload
 CUTOFF_HOUR = 15                  # CALIBRATE: orders after this roll to next day
 BULK_MAX_WAIT_DAYS = 0            # CALIBRATE: bulk customers are time-sensitive

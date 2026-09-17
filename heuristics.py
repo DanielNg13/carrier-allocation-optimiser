@@ -17,7 +17,7 @@ ORDER TABLE (input) - generate_data.py must produce these columns:
   order_id       unique id, e.g. "O0001". One order = one customer's booking.
   booking_type   "BULK" (own truck, multi-stop) or "RETAIL" (consolidated, direct)
   vehicle_type   "CONTAINER" or "REEFER"
-  weight_kg      never above that vehicle's payload (oversize orders pre-split)
+  volume_cbm     cubic metres of cartons; never above that vehicle's capacity
   ready_day      first day the order can ship (after-cutoff orders already +1)
   max_wait_days  days it may wait after ready_day before it counts as late
 """
@@ -27,15 +27,16 @@ import pandas as pd
 import reference as ref
 from cost_matrix import build_cost_table, sub_is_eligible, IN_HOUSE
 
-RETAIL_MIN_FILL = 0.85   # CALIBRATE: "handler says it's full" = at least 85% of payload
+RETAIL_MIN_FILL = 0.85   # CALIBRATE: "handler says it's full" = at least 85% of usable space
 MAX_EXTRA_DAYS = 30      # safety stop: how long to keep planning after the last order
 
 
 # ---------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------
-def payload(vehicle_type):
-    return ref.VEHICLE_TYPES.set_index("vehicle_type").loc[vehicle_type, "payload_kg"]
+def capacity(vehicle_type):
+    """Usable cargo space of one truck, in cubic metres."""
+    return ref.VEHICLE_TYPES.set_index("vehicle_type").loc[vehicle_type, "capacity_cbm"]
 
 
 def default_truck_ready_days():
@@ -62,13 +63,13 @@ def make_trip(route, vehicle_type, trip_orders, day):
         "route": route,
         "vehicle_type": vehicle_type,
         "orders": trip_orders,
-        "weight": sum(o["weight_kg"] for o in trip_orders),
+        "volume": sum(o["volume_cbm"] for o in trip_orders),
         "due": any(is_due(o, day) for o in trip_orders),
         "earliest_ready": min(o["ready_day"] for o in trip_orders),
     }
 
 
-def pack_retail(orders, capacity):
+def pack_retail(orders, truck_space):
     """
     First-fit packing: put each order in the first truck with room.
     An order is never split (planner rule 8).
@@ -77,13 +78,13 @@ def pack_retail(orders, capacity):
     for order in orders:
         placed = False
         for truck in trucks:
-            if truck["weight"] + order["weight_kg"] <= capacity:
+            if truck["volume"] + order["volume_cbm"] <= truck_space:
                 truck["orders"].append(order)
-                truck["weight"] += order["weight_kg"]
+                truck["volume"] += order["volume_cbm"]
                 placed = True
                 break
         if not placed:
-            trucks.append({"orders": [order], "weight": order["weight_kg"]})
+            trucks.append({"orders": [order], "volume": order["volume_cbm"]})
     return [truck["orders"] for truck in trucks]
 
 
@@ -128,9 +129,9 @@ def run_allocation(orders, ranking_fn, retail_waits_for_own_truck, retail_first,
         for vt in ref.VEHICLE_TYPES["vehicle_type"]:
             retail = [o for o in ready_now
                       if o["booking_type"] == "RETAIL" and o["vehicle_type"] == vt]
-            for packed in pack_retail(retail, payload(vt)):
+            for packed in pack_retail(retail, capacity(vt)):
                 trip = make_trip("RETAIL", vt, packed, day)
-                full_enough = trip["weight"] >= RETAIL_MIN_FILL * payload(vt)
+                full_enough = trip["volume"] >= RETAIL_MIN_FILL * capacity(vt)
                 if not (full_enough or trip["due"]):
                     continue   # rule 7: wait for more orders to fill the truck
 
@@ -278,16 +279,16 @@ def make_test_orders(n_days=20, seed=1):
         for booking_type, vt, count in daily_mix:
             for _ in range(count):
                 if booking_type == "BULK":
-                    weight = round(rng.uniform(*ref.BULK_FILL) * payload(vt))
+                    volume = round(rng.uniform(*ref.BULK_FILL) * capacity(vt), 2)
                     wait = ref.BULK_MAX_WAIT_DAYS
                 else:
-                    weight = rng.randint(*ref.RETAIL_ORDER_KG)
+                    volume = round(rng.uniform(1.0, 5.0), 2)   # rough size, test only
                     wait = ref.RETAIL_MAX_WAIT_DAYS
                 rows.append({
                     "order_id": f"O{len(rows) + 1:04d}",
                     "booking_type": booking_type,
                     "vehicle_type": vt,
-                    "weight_kg": weight,
+                    "volume_cbm": volume,
                     "ready_day": day,
                     "max_wait_days": wait,
                 })

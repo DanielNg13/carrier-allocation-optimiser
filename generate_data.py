@@ -15,12 +15,18 @@ import os
 import random
 import pandas as pd
 import reference as ref
-from heuristics import payload, planner_heuristic
+from heuristics import capacity, planner_heuristic
 
 SEED = 2026                    # change to create a different synthetic sample
 OUTPUT_PATH = os.path.join("data", "orders.csv")
-RETAIL_AVG_FILL = 0.90         # CALIBRATE: a retail "truckload" is ~90% full
-ORDER_HOURS = (7, 18)          # CALIBRATE: orders arrive between 7am and 6pm
+RETAIL_AVG_FILL = 0.90         # CALIBRATE: a retail "truckload" is ~90% of usable space
+
+# CALIBRATE: relative number of orders arriving in each hour.
+# Most arrive in the morning; about 6% arrive at or after the 3pm cut-off.
+ORDER_HOUR_WEIGHTS = {
+    7: 8, 8: 14, 9: 16, 10: 16, 11: 14, 12: 8, 13: 10, 14: 8,   # before cut-off: 94
+    15: 3, 16: 2, 17: 1,                                        # after cut-off:   6
+}
 
 
 # ---------------------------------------------------------------
@@ -39,6 +45,26 @@ def poisson(rng, mean):
         count += 1
         product *= rng.random()
     return count
+
+
+def retail_order_volume(rng):
+    """One retail customer's booking: a mix of small and large cartons, in m3."""
+    n_cartons = rng.randint(*ref.RETAIL_CARTONS)
+    volume = 0
+    for _ in range(n_cartons):
+        if rng.random() < ref.LARGE_CARTON_SHARE:
+            volume += ref.CARTON_CBM["large"]
+        else:
+            volume += ref.CARTON_CBM["small"]
+    return round(volume, 2)
+
+
+def average_retail_volume():
+    """Expected size of one retail order - used to decide how many orders to create."""
+    avg_cartons = sum(ref.RETAIL_CARTONS) / 2
+    avg_carton = (ref.LARGE_CARTON_SHARE * ref.CARTON_CBM["large"]
+                  + (1 - ref.LARGE_CARTON_SHARE) * ref.CARTON_CBM["small"])
+    return avg_cartons * avg_carton
 
 
 def season_multiplier(date):
@@ -62,6 +88,8 @@ def season_label(date):
 def generate_orders(seed=SEED):
     rng = random.Random(seed)
     dates = pd.date_range(ref.START_DATE, periods=ref.N_DAYS, freq="D")
+    hours = list(ORDER_HOUR_WEIGHTS.keys())
+    hour_weights = list(ORDER_HOUR_WEIGHTS.values())
     rows = []
 
     for day, date in enumerate(dates):
@@ -76,21 +104,20 @@ def generate_orders(seed=SEED):
             n_bulk = poisson(rng, bulk_truckloads)
 
             # Retail: enough small orders to fill the expected retail trucks
-            avg_retail_kg = sum(ref.RETAIL_ORDER_KG) / 2
-            retail_kg = retail_truckloads * payload(vt) * RETAIL_AVG_FILL
-            n_retail = poisson(rng, retail_kg / avg_retail_kg)
+            retail_cbm = retail_truckloads * capacity(vt) * RETAIL_AVG_FILL
+            n_retail = poisson(rng, retail_cbm / average_retail_volume())
 
             for booking_type, count in [("BULK", n_bulk), ("RETAIL", n_retail)]:
                 for _ in range(count):
                     if booking_type == "BULK":
-                        # Capped at 100% of payload, so no bulk order needs splitting
-                        weight = round(rng.uniform(*ref.BULK_FILL) * payload(vt))
+                        # Capped at 100% of the truck, so no bulk order needs splitting
+                        volume = round(rng.uniform(*ref.BULK_FILL) * capacity(vt), 2)
                         max_wait = ref.BULK_MAX_WAIT_DAYS
                     else:
-                        weight = rng.randint(*ref.RETAIL_ORDER_KG)
+                        volume = retail_order_volume(rng)
                         max_wait = ref.RETAIL_MAX_WAIT_DAYS
 
-                    hour = rng.randint(*ORDER_HOURS)
+                    hour = rng.choices(hours, weights=hour_weights)[0]
                     after_cutoff = hour >= ref.CUTOFF_HOUR   # rule 5: rolls to tomorrow
 
                     rows.append({
@@ -100,7 +127,7 @@ def generate_orders(seed=SEED):
                         "season": season_label(date),
                         "booking_type": booking_type,
                         "vehicle_type": vt,
-                        "weight_kg": weight,
+                        "volume_cbm": volume,
                         "ready_day": day + 1 if after_cutoff else day,
                         "max_wait_days": max_wait,
                     })
@@ -128,10 +155,12 @@ if __name__ == "__main__":
     print(pd.crosstab(orders["booking_type"], orders["vehicle_type"], margins=True), "\n")
 
     # Check 1: does demand follow the seasonality?
-    daily_kg = orders.groupby(["order_day", "season"])["weight_kg"].sum().reset_index()
-    print("Average kg per day by season:")
-    print(daily_kg.groupby("season")["weight_kg"].mean().round(-2).to_string(), "\n")
+    daily_cbm = orders.groupby(["order_day", "season"])["volume_cbm"].sum().reset_index()
+    print("Average m3 per day by season:")
+    print(daily_cbm.groupby("season")["volume_cbm"].mean().round(1).to_string(), "\n")
 
+    retail = orders[orders["booking_type"] == "RETAIL"]
+    print(f"Average retail order: {retail['volume_cbm'].mean():.2f} m3")
     print(f"Orders after the {ref.CUTOFF_HOUR}:00 cut-off (rolled to next day): "
           f"{(orders['ready_day'] > orders['order_day']).mean():.0%}\n")
 
