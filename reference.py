@@ -97,7 +97,7 @@ SUBCONTRACTORS = pd.DataFrame([
 # ---------------------------------------------------------------
 # 6. Demand and planner behaviour
 # ---------------------------------------------------------------
-AVG_TRUCKLOADS_PER_DAY = {"CONTAINER": 1.4, "REEFER": 0.6}  # CALIBRATE: ~2/day total
+AVG_TRUCKLOADS_PER_DAY = {"CONTAINER": 1.1, "REEFER": 0.5}  # CALIBRATE: tuned so planner rules give ~5-6 sub trips/week (see generate_data.py)
 BULK_SHARE = 0.5                  # CALIBRATE: share of truckloads that are bulk bookings
 RETAIL_ORDER_KG = (500, 4000)     # CALIBRATE: min/max weight of one retail customer's order
 BULK_FILL = (0.6, 1.0)            # CALIBRATE: bulk order weight as a share of payload
@@ -127,4 +127,4 @@ if __name__ == "__main__":
         shortfall = max(demand - capacity, 0)
         total_shortfall += shortfall
         print(f"  {vt:<10} capacity {capacity:.2f}  demand {demand:.2f}  shortfall {shortfall:.2f}")
-    print(f"Implied sub calls per week: {total_shortfall * 7:.1f}  (target: 5-6)")
+    print(f"Rough sub calls per week (ignores peaks and packing): {total_shortfall * 7:.1f}")
